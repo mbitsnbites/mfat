@@ -1,0 +1,5 @@
+---
+Checks: 'clang-diagnostic-*,clang-analyzer-*,bugprone-*,readability-*,-readability-magic-numbers,misc-*'
+HeaderFilterRegex: 'mfat\.h'
+...
+
