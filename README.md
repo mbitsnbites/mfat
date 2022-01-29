@@ -28,8 +28,8 @@ The internal MFAT context is statically allocated, meaning:
 
 Also: **MFAT is still work-in-progress**.
 
-* Writing is not supported yet (#2).
-* Long file names are not supported yet (#3).
+* Writing is not supported yet.
+* Long file names are not supported yet.
 
 ## POSIX compatibility
 
