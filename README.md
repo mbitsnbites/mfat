@@ -21,10 +21,15 @@ The library has been designed for embedded systems, and its small code and memor
 
 ## Limitations
 
-* The internal MFAT context is statically allocated, meaning:
-  - Only a single device may be mounted at any time.
-  - The API is not thread safe.
-* Long file names are not supported (yet).
+The internal MFAT context is statically allocated, meaning:
+
+* Only a single device may be mounted at any time.
+* The API is not thread safe.
+
+Also: **MFAT is still work-in-progress**.
+
+* Writing is not supported yet (#2).
+* Long file names are not supported yet (#3).
 
 ## POSIX compatibility
 
@@ -53,21 +58,6 @@ Note that the library is not fully POSIX compliant. For instance:
 While the library itself is not fully POSIX compliant, it is suitable as a low level I/O implementation layer for higher level libraries, such as [newlib](https://sourceware.org/newlib/).
 
 It is also easy to modify existing programs that use POSIX I/O routines to use the MFAT library instead.
-
-## Status
-
-**MFAT is still work-in-progress**
-
-The following has been tested and seems to work:
-
-* FAT16 & FAT32 partitions.
-* MBR & GPT & partitionless.
-* Switching partitions (`mfat_select_partition()`).
-* Reading files (`mfat_open()`/`mfat_read()`/`mfat_close()`).
-
-The following is not yet implemented:
-
-* Writing files (`mfat_write()`).
 
 ## FAT Documentation
 
