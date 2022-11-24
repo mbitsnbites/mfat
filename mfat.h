@@ -128,6 +128,12 @@ int mfat_select_partition(int partition_no);
 /// @brief Flush pending data updates to storage.
 void mfat_sync(void);
 
+/// @brief Obtain information about a open file.
+/// @param fd The file descriptor.
+/// @param stat Pointer to a stat structure into which information is placed concerning the file.
+/// @returns zero (0) on success, or -1 on failure.
+int mfat_fstat(int fd, mfat_stat_t* stat);
+
 /// @brief Obtain information about a file.
 /// @param path The path to the file.
 /// @param stat Pointer to a stat structure into which information is placed concerning the file.

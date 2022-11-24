@@ -39,13 +39,14 @@ These are the MFAT functions that are inspired by POSIX functions:
 
 | MFAT function | POSIX prototype |
 | --- | --- |
-| `mfat_sync()` | [`sync()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/sync.html) |
-| `mfat_stat()` | [`stat()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/stat.html) |
-| `mfat_open()` | [`open()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/open.html) |
 | `mfat_close()` | [`close()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/close.html) |
-| `mfat_read()` | [`read()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/read.html) |
-| `mfat_write()` | [`write()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/write.html) |
+| `mfat_fstat()` | [`fstat()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fstat.html) |
 | `mfat_lseek()` | [`lseek()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/lseek.html) |
+| `mfat_open()` | [`open()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/open.html) |
+| `mfat_read()` | [`read()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/read.html) |
+| `mfat_stat()` | [`stat()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/stat.html) |
+| `mfat_sync()` | [`sync()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/sync.html) |
+| `mfat_write()` | [`write()`](https://pubs.opengroup.org/onlinepubs/9699919799/functions/write.html) |
 
 Note that the library is not fully POSIX compliant. For instance:
 
