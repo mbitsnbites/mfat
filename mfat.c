@@ -781,7 +781,7 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
   return true;
 }
 
-static mfat_file_t* _mfat_get_file(int fd) {
+static mfat_file_t* _mfat_fd_to_file(int fd) {
   if (fd < 0 || fd >= MFAT_NUM_FDS) {
     DBGF("FD out of range: %d", fd);
     return NULL;
@@ -1474,7 +1474,7 @@ int mfat_fstat(int fd, mfat_stat_t* stat) {
     return -1;
   }
 
-  mfat_file_t* f = _mfat_get_file(fd);
+  mfat_file_t* f = _mfat_fd_to_file(fd);
   if (f == NULL) {
     return -1;
   }
@@ -1512,7 +1512,7 @@ int mfat_close(int fd) {
     return -1;
   }
 
-  mfat_file_t* f = _mfat_get_file(fd);
+  mfat_file_t* f = _mfat_fd_to_file(fd);
   if (f == NULL) {
     return -1;
   }
@@ -1526,7 +1526,7 @@ int64_t mfat_read(int fd, void* buf, uint32_t nbyte) {
     return -1;
   }
 
-  mfat_file_t* f = _mfat_get_file(fd);
+  mfat_file_t* f = _mfat_fd_to_file(fd);
   if (f == NULL) {
     return -1;
   }
@@ -1541,7 +1541,7 @@ int64_t mfat_write(int fd, const void* buf, uint32_t nbyte) {
     return -1;
   }
 
-  mfat_file_t* f = _mfat_get_file(fd);
+  mfat_file_t* f = _mfat_fd_to_file(fd);
   if (f == NULL) {
     return -1;
   }
@@ -1558,7 +1558,7 @@ int64_t mfat_lseek(int fd, int64_t offset, int whence) {
     return -1;
   }
 
-  mfat_file_t* f = _mfat_get_file(fd);
+  mfat_file_t* f = _mfat_fd_to_file(fd);
   if (f == NULL) {
     return -1;
   }
