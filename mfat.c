@@ -957,8 +957,9 @@ static mfat_bool_t _mfat_find_file(int part_no,
   while (path_pos >= 0) {
     // Extract a directory entry compatible file name.
     char fname[12];
-    path_pos = _mfat_canonicalize_fname(&path[path_pos], fname);
-    mfat_bool_t is_parent_dir = (path_pos >= 0);
+    int name_pos = _mfat_canonicalize_fname(&path[path_pos], fname);
+    mfat_bool_t is_parent_dir = (name_pos >= 0);
+    path_pos = is_parent_dir ? path_pos + name_pos : -1;
     DBGF("Looking for %s: \"%s\"", is_parent_dir ? "parent dir" : "file", fname);
 
     // Use an "unlimited" block counter if we're doing a clusterchain lookup.
