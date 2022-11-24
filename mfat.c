@@ -851,59 +851,68 @@ static int _mfat_canonicalize_char(int c) {
 ///   - "File.1"             -> "FILE    1  "
 ///   - "ALongFileName.json" -> "ALONGFILJSO"
 ///   - "bin/foo.exe"        -> "BIN        " (followed by "FOO     EXE" at the next invocation)
+///   - "./foo.exe"          -> "FOO     EXE"
 /// @param path A path to a file, possibly includuing directory separators (/ or \).
 /// @param[out] fname The canonicalized file name.
 /// @returns the index of the next path part, or -1 if this was the last path part.
 static int _mfat_canonicalize_fname(const char* path, char name[12]) {
-  int pos = 0;
-  int npos = 0;
-  int c;
+  int next_idx = 0;
 
-  // Extract the name part.
-  while (true) {
-    c = (int)(uint8_t)path[pos++];
-    if (c == 0 || c == '.' || c == '/' || c == '\\') {
-      break;
-    }
-    if (npos < 8) {
-      name[npos++] = (char)_mfat_canonicalize_char(c);
-    }
-  }
+  do {
+    int pos = next_idx;
+    int npos = 0;
+    int c;
 
-  // Space-fill remaining characters of the name part.
-  for (; npos < 8; ++npos) {
-    name[npos] = ' ';
-  }
-
-  // Extract the extension part.
-  if (c == '.') {
+    // Extract the name part.
     while (true) {
       c = (int)(uint8_t)path[pos++];
-      if (c == 0 || c == '/' || c == '\\') {
+      if (c == 0 || c == '.' || c == '/' || c == '\\') {
         break;
       }
-      if (npos < 11) {
+      if (npos < 8) {
         name[npos++] = (char)_mfat_canonicalize_char(c);
       }
     }
-  }
 
-  // Space-fill remaining characters of the extension part.
-  for (; npos < 11; ++npos) {
-    name[npos] = ' ';
-  }
+    // Space-fill remaining characters of the name part.
+    for (; npos < 8; ++npos) {
+      name[npos] = ' ';
+    }
 
-  // Zero terminate the string.
-  name[11] = 0;
+    // Extract the extension part.
+    if (c == '.') {
+      while (true) {
+        c = (int)(uint8_t)path[pos++];
+        if (c == 0 || c == '/' || c == '\\') {
+          break;
+        }
+        if (npos < 11) {
+          name[npos++] = (char)_mfat_canonicalize_char(c);
+        }
+      }
+    }
 
-  // Was this a directory part of the path (ignore trailing directory separators)?
-  if ((c == '/' || c == '\\') && path[pos] != 0) {
-    // Return the starting position of the next path part.
-    return pos;
-  }
+    // Space-fill remaining characters of the extension part.
+    for (; npos < 11; ++npos) {
+      name[npos] = ' ';
+    }
 
-  // Indicate that there are no more path parts by returning -1.
-  return -1;
+    // Zero terminate the string.
+    name[11] = 0;
+
+    // Was this a directory part of the path (ignore trailing directory separators)?
+    if ((c == '/' || c == '\\') && path[pos] != 0) {
+      // Return the starting position of the next path part.
+      next_idx = pos;
+    } else {
+      // Indicate that there are no more path parts by returning -1.
+      next_idx = -1;
+    }
+
+    // Skip empty "/" and "./" directory references.
+  } while (next_idx >= 0 && _mfat_cmpbuf((const uint8_t*)&name[0], (const uint8_t*)"           ", 11));
+
+  return next_idx;
 }
 
 /// @brief Find a file on the given partition.
@@ -1063,6 +1072,20 @@ static void _mfat_sync_impl() {
   }
 }
 #endif
+
+static int _mfat_fstat_impl(mfat_file_info_t* info, mfat_stat_t* stat) {
+  // Read the directory entry block (should already be in the cache).
+  mfat_cached_block_t* block = _mfat_read_block(info->dir_entry_block, MFAT_CACHE_DATA);
+  if (block == NULL) {
+    return -1;
+  }
+
+  // Extract the relevant information for this directory entry.
+  uint8_t* dir_entry = &block->buf[info->dir_entry_offset];
+  _mfat_dir_entry_to_stat(dir_entry, stat);
+
+  return 0;
+}
 
 static int _mfat_stat_impl(const char* path, mfat_stat_t* stat) {
   // Find the file in the file system structure.
