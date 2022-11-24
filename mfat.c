@@ -119,10 +119,10 @@ typedef int mfat_bool_t;
 #define MFAT_NUM_CACHES 2
 
 // mfat_partition_t::type
-#define MFAT_TYPE_UNKNOWN 0
-#define MFAT_TYPE_FAT_UNDECIDED 1  // Indicates a FAT partion of yet unknown type (FAT16 or FAT32).
-#define MFAT_TYPE_FAT16 2
-#define MFAT_TYPE_FAT32 3
+#define MFAT_PART_TYPE_UNKNOWN 0
+#define MFAT_PART_TYPE_FAT_UNDECIDED 1  // A FAT partion of yet unknown type (FAT16 or FAT32).
+#define MFAT_PART_TYPE_FAT16 2
+#define MFAT_PART_TYPE_FAT32 3
 
 // A collection of variables for keeping track of the current cluster & block position, e.g. during
 // read/write operations.
@@ -378,7 +378,7 @@ static mfat_cached_block_t* _mfat_read_block(uint32_t block_no, int cache_type) 
 
 // Helper function for finding the next cluster in a cluster chain.
 static mfat_bool_t _mfat_next_cluster(const mfat_partition_t* part, uint32_t* cluster) {
-  const uint32_t fat_entry_size = (part->type == MFAT_TYPE_FAT32) ? 4 : 2;
+  const uint32_t fat_entry_size = (part->type == MFAT_PART_TYPE_FAT32) ? 4 : 2;
 
   uint32_t fat_offset = fat_entry_size * (*cluster);
   uint32_t fat_block =
@@ -398,7 +398,7 @@ static mfat_bool_t _mfat_next_cluster(const mfat_partition_t* part, uint32_t* cl
 
   // Get the value for this cluster from the FAT.
   uint32_t next_cluster;
-  if (part->type == MFAT_TYPE_FAT32) {
+  if (part->type == MFAT_PART_TYPE_FAT32) {
     // For FAT32 we mask off upper 4 bits, as the cluster number is 28 bits.
     next_cluster = _mfat_get_dword(&buf[fat_block_offset]) & 0x0fffffffU;
   } else {
@@ -538,7 +538,7 @@ static mfat_bool_t _mfat_decode_gpt(void) {
     // Is this a potential FAT partition?
     if (_mfat_is_fat_part_guid(&entry[0])) {
       // The actual FAT type is determined later.
-      part->type = MFAT_TYPE_FAT_UNDECIDED;
+      part->type = MFAT_PART_TYPE_FAT_UNDECIDED;
     }
 
     // Note: We print GUIDs in byte order, as we expect them in our signatures, NOT in GUID
@@ -551,7 +551,7 @@ static mfat_bool_t _mfat_decode_gpt(void) {
          _mfat_get_dword(&entry[8]),
          _mfat_get_dword(&entry[4]),
          _mfat_get_dword(&entry[0]),
-         part->type != MFAT_TYPE_UNKNOWN ? "Yes" : "No");
+         part->type != MFAT_PART_TYPE_UNKNOWN ? "Yes" : "No");
 
     entry_offs += entry_size;
   }
@@ -583,7 +583,7 @@ static mfat_bool_t _mfat_decode_mbr(void) {
       // Is this a FAT partition.
       if (_mfat_is_fat_part_id(entry[4])) {
         // The actual FAT type is determined later.
-        part->type = MFAT_TYPE_FAT_UNDECIDED;
+        part->type = MFAT_PART_TYPE_FAT_UNDECIDED;
         found_valid_mbr = true;
       }
 
@@ -612,7 +612,7 @@ static void _mfat_decode_tableless(void) {
   // Guess that the first partition is FAT (we'll detect the actual type later).
   // Note: The "first_block" field is cleared to zero in the previous memset, so the first
   // partition starts at the first block, which is what we intend.
-  s_ctx.partition[0].type = MFAT_TYPE_FAT_UNDECIDED;
+  s_ctx.partition[0].type = MFAT_PART_TYPE_FAT_UNDECIDED;
 }
 
 static mfat_bool_t _mfat_decode_partition_tables(void) {
@@ -643,7 +643,7 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
     mfat_partition_t* part = &s_ctx.partition[i];
 
     // Skip unsupported partition types.
-    if (part->type == MFAT_TYPE_UNKNOWN) {
+    if (part->type == MFAT_PART_TYPE_UNKNOWN) {
       DBG("\t\tNot a FAT partition");
       continue;
     }
@@ -658,7 +658,7 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
 
     if (!_mfat_is_valid_bpb(buf)) {
       DBG("\t\tPartition does not appear to have a valid BPB");
-      part->type = MFAT_TYPE_UNKNOWN;
+      part->type = MFAT_PART_TYPE_UNKNOWN;
       continue;
     }
 
@@ -691,7 +691,7 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
     // TODO(m): We could add support for larger block sizes.
     if (bytes_per_block != MFAT_BLOCK_SIZE) {
       DBGF("\t\tUnsupported block size: %" PRIu32, bytes_per_block);
-      part->type = MFAT_TYPE_UNKNOWN;
+      part->type = MFAT_PART_TYPE_UNKNOWN;
       continue;
     }
 
@@ -718,20 +718,20 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
 
       // We don't support FAT12.
       if (count_of_clusters < 4085) {
-        part->type = MFAT_TYPE_UNKNOWN;
+        part->type = MFAT_PART_TYPE_UNKNOWN;
         DBG("\t\tFAT12 is not supported.");
         continue;
       }
 
       if (count_of_clusters < 65525) {
-        part->type = MFAT_TYPE_FAT16;
+        part->type = MFAT_PART_TYPE_FAT16;
       } else {
-        part->type = MFAT_TYPE_FAT32;
+        part->type = MFAT_PART_TYPE_FAT32;
       }
     }
 
     // Determine the starting block/cluster for the root directory.
-    if (part->type == MFAT_TYPE_FAT16) {
+    if (part->type == MFAT_PART_TYPE_FAT16) {
       part->root_dir_block = part->first_data_block - part->blocks_in_root_dir;
     } else {
       part->root_dir_cluster = _mfat_get_dword(&buf[44]);
@@ -739,7 +739,7 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
 
 #if MFAT_ENABLE_DEBUG
     // Print the partition information.
-    DBGF("\t\ttype = %s", part->type == MFAT_TYPE_FAT16 ? "FAT16" : "FAT32");
+    DBGF("\t\ttype = %s", part->type == MFAT_PART_TYPE_FAT16 ? "FAT16" : "FAT32");
     DBGF("\t\tboot = %s", part->boot ? "Yes" : "No");
     DBGF("\t\tfirst_block = %" PRIu32, part->first_block);
     DBGF("\t\tbytes_per_block = %" PRIu32, bytes_per_block);
@@ -757,7 +757,7 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
     DBGF("\t\tfirst_data_block = %" PRIu32, part->first_data_block);
 
     // Print the extended boot signature.
-    const uint8_t* ex_boot_sig = (part->type == MFAT_TYPE_FAT32) ? &buf[66] : &buf[38];
+    const uint8_t* ex_boot_sig = (part->type == MFAT_PART_TYPE_FAT32) ? &buf[66] : &buf[38];
     if (ex_boot_sig[0] == 0x29) {
       uint32_t vol_id = _mfat_get_dword(&ex_boot_sig[1]);
 
@@ -939,7 +939,7 @@ static mfat_bool_t _mfat_find_file(int part_no,
   // Start with the root directory cluster/block.
   mfat_cluster_pos_t cpos;
   uint32_t blocks_left;
-  if (part->type == MFAT_TYPE_FAT32) {
+  if (part->type == MFAT_PART_TYPE_FAT32) {
     cpos = _mfat_cluster_pos_init(part, part->root_dir_cluster, 0);
     blocks_left = 0xffffffffU;
   } else {
@@ -1409,7 +1409,7 @@ int mfat_mount(mfat_read_block_fun_t read_fun, mfat_write_block_fun_t write_fun,
   // partition.
   int first_boot_partition = -1;
   for (int i = 0; i < MFAT_NUM_PARTITIONS; ++i) {
-    if (s_ctx.partition[i].type != MFAT_TYPE_UNKNOWN) {
+    if (s_ctx.partition[i].type != MFAT_PART_TYPE_UNKNOWN) {
       if (s_ctx.partition[i].boot && first_boot_partition < 0) {
         first_boot_partition = i;
         s_ctx.active_partition = i;
@@ -1447,7 +1447,7 @@ int mfat_select_partition(int partition_no) {
     DBGF("Bad partition number: %d", partition_no);
     return -1;
   }
-  if (s_ctx.partition[partition_no].type == MFAT_TYPE_UNKNOWN) {
+  if (s_ctx.partition[partition_no].type == MFAT_PART_TYPE_UNKNOWN) {
     DBG("Unsupported partition type");
     return -1;
   }
