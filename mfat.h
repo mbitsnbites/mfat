@@ -46,6 +46,7 @@ extern "C" {
 #define MFAT_O_RDWR (MFAT_O_RDONLY | MFAT_O_WRONLY)
 #define MFAT_O_APPEND 4
 #define MFAT_O_CREAT 8
+#define MFAT_O_DIRECTORY 16
 
 // Whence values for mfat_lseek().
 #define MFAT_SEEK_SET 0  ///< The offset is set to offset bytes.

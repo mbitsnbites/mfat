@@ -124,6 +124,11 @@ typedef int mfat_bool_t;
 #define MFAT_PART_TYPE_FAT16 2
 #define MFAT_PART_TYPE_FAT32 3
 
+// mfat_file_t::type
+#define MFAT_FILE_TYPE_REGULAR 0       // Regular file.
+#define MFAT_FILE_TYPE_DIR 1           // A directory.
+#define MFAT_FILE_TYPE_FAT16ROOTDIR 2  // A FAT16 root directory (which is special).
+
 // A collection of variables for keeping track of the current cluster & block position, e.g. during
 // read/write operations.
 typedef struct {
@@ -159,8 +164,10 @@ typedef struct {
   uint32_t dir_entry_offset;  // Offset (in bytes) into the directory entry block.
 } mfat_file_info_t;
 
+// File handle, corresponding to a file descriptor (fd).
 typedef struct {
   mfat_bool_t open;          // Is the file open?
+  int type;                  // File type (e.g. MFAT_FILE_TYPE_REGULAR or MFAT_FILE_TYPE_DIR).
   int oflag;                 // Flags used when opening the file.
   uint32_t offset;           // Current byte offset relative to the file start (seek offset).
   uint32_t current_cluster;  // Current cluster (representing the current seek offset)
@@ -935,13 +942,13 @@ static int _mfat_canonicalize_fname(const char* path, char name[12]) {
 /// @param part_no The partition number.
 /// @param path The absolute path to the file.
 /// @param[out] info Information about the file.
-/// @param[out] is_dir true if the file is a directory, false if it is a regular file.
+/// @param[out] file_type The file type (e.g. dir or regular file).
 /// @param[out] exists true if the file exists, false if it needs to be created.
 /// @returns true if the file (or its potential slot) was found.
 static mfat_bool_t _mfat_find_file(int part_no,
                                    const char* path,
                                    mfat_file_info_t* info,
-                                   mfat_bool_t* is_dir,
+                                   int* file_type,
                                    mfat_bool_t* exists) {
   mfat_partition_t* part = &s_ctx.partition[part_no];
 
@@ -959,117 +966,146 @@ static mfat_bool_t _mfat_find_file(int part_no,
     blocks_left = part->blocks_in_root_dir;
   }
 
+  // Special case: Is the caller trying to open the root directory?
+  mfat_bool_t is_root_dir = false;
+  if (path[1] == 0 && (path[0] == '/' || path[0] == '\\')) {
+    DBG("Request to open root directory");
+    is_root_dir = true;
+  }
+
   // Try to find the given path.
   mfat_cached_block_t* block = NULL;
   uint8_t* file_entry = NULL;
-  int path_pos = 0;
-  while (path_pos >= 0) {
-    // Extract a directory entry compatible file name.
-    char fname[12];
-    int name_pos = _mfat_canonicalize_fname(&path[path_pos], fname);
-    mfat_bool_t is_parent_dir = (name_pos >= 0);
-    path_pos = is_parent_dir ? path_pos + name_pos : -1;
-    DBGF("Looking for %s: \"%s\"", is_parent_dir ? "parent dir" : "file", fname);
-
-    // Use an "unlimited" block counter if we're doing a clusterchain lookup.
-    if (cpos.cluster_no != 0U) {
-      blocks_left = 0xffffffffU;
+  if (!is_root_dir) {
+    // Skip leading slashes.
+    while (*path == '/' || *path == '\\') {
+      ++path;
     }
 
-    // Look up the file name in the directory.
-    mfat_bool_t no_more_entries = false;
-    for (; file_entry == NULL && !no_more_entries && blocks_left > 0U; --blocks_left) {
-      // Load the directory table block.
-      block = _mfat_read_block(_mfat_cluster_pos_blk_no(&cpos), MFAT_CACHE_DATA);
-      if (block == NULL) {
-        DBGF("Unable to load directory block %" PRIu32, _mfat_cluster_pos_blk_no(&cpos));
-        return false;
-      }
-      uint8_t* buf = &block->buf[0];
+    int path_pos = 0;
+    while (path_pos >= 0) {
+      // Extract a directory entry compatible file name.
+      char fname[12];
+      int name_pos = _mfat_canonicalize_fname(&path[path_pos], fname);
+      mfat_bool_t is_parent_dir = (name_pos >= 0);
 
-      // Loop over all the files in this directory block.
-      uint8_t* found_entry = NULL;
-      for (uint32_t offs = 0U; offs < 512U; offs += 32U) {
-        uint8_t* entry = &buf[offs];
+      path_pos = is_parent_dir ? path_pos + name_pos : -1;
+      DBGF("Looking for %s: \"%s\"", is_parent_dir ? "parent dir" : "file", fname);
 
-        // TODO(m): Look for the first 0xe5-entry too in case we want to create a new file.
-
-        // Last entry in the directory structure?
-        if (entry[0] == 0x00) {
-          no_more_entries = true;
-          break;
-        }
-
-        // Not a file/dir entry?
-        if (!_mfat_is_valid_shortname_file(entry)) {
-          continue;
-        }
-
-        // Is this the file/dir that we are looking for?
-        if (_mfat_cmpbuf(&entry[0], (const uint8_t*)&fname[0], 11)) {
-          found_entry = entry;
-          break;
-        }
-      }
-
-      // Did we have a match.
-      if (found_entry != NULL) {
-        uint32_t attr = found_entry[11];
-
-        // Descend into directory?
-        if (is_parent_dir) {
-          if ((attr & MFAT_ATTR_DIRECTORY) == 0U) {
-            DBGF("Not a directory: %s", fname);
-            return false;
-          }
-
-          // Decode the starting cluster of the child directory entry table.
-          uint32_t chile_dir_cluster_no =
-              (_mfat_get_word(&found_entry[20]) << 16) | _mfat_get_word(&found_entry[26]);
-          cpos = _mfat_cluster_pos_init(part, chile_dir_cluster_no, 0);
-          blocks_left = 0xffffffffU;
-        } else {
-          file_entry = found_entry;
-        }
-
-        break;
-      }
-
-      // Go to the next block in the directory.
+      // Use an "unlimited" block counter if we're doing a clusterchain lookup.
       if (cpos.cluster_no != 0U) {
-        if (!_mfat_cluster_pos_advance(&cpos, part)) {
+        blocks_left = 0xffffffffU;
+      }
+
+      // Look up the file name in the directory.
+      mfat_bool_t no_more_entries = false;
+      for (; file_entry == NULL && !no_more_entries && blocks_left > 0U; --blocks_left) {
+        // Load the directory table block.
+        block = _mfat_read_block(_mfat_cluster_pos_blk_no(&cpos), MFAT_CACHE_DATA);
+        if (block == NULL) {
+          DBGF("Unable to load directory block %" PRIu32, _mfat_cluster_pos_blk_no(&cpos));
           return false;
         }
-      } else {
-        cpos.block_in_cluster += 1;  // FAT16 style linear block access.
-      }
-    }
+        uint8_t* buf = &block->buf[0];
 
-    // Break loop if we didn't find the file.
-    if (no_more_entries) {
-      break;
+        // Loop over all the files in this directory block.
+        uint8_t* found_entry = NULL;
+        for (uint32_t offs = 0U; offs < 512U; offs += 32U) {
+          uint8_t* entry = &buf[offs];
+
+          // TODO(m): Look for the first 0xe5-entry too in case we want to create a new file.
+
+          // Last entry in the directory structure?
+          if (entry[0] == 0x00) {
+            no_more_entries = true;
+            break;
+          }
+
+          // Not a file/dir entry?
+          if (!_mfat_is_valid_shortname_file(entry)) {
+            continue;
+          }
+
+          // Is this the file/dir that we are looking for?
+          if (_mfat_cmpbuf(&entry[0], (const uint8_t*)&fname[0], 11)) {
+            found_entry = entry;
+            break;
+          }
+        }
+
+        // Did we have a match.
+        if (found_entry != NULL) {
+          uint32_t attr = found_entry[11];
+
+          // Descend into directory?
+          if (is_parent_dir) {
+            if ((attr & MFAT_ATTR_DIRECTORY) == 0U) {
+              DBGF("Not a directory: %s", fname);
+              return false;
+            }
+
+            // Decode the starting cluster of the child directory entry table.
+            uint32_t chile_dir_cluster_no =
+                (_mfat_get_word(&found_entry[20]) << 16) | _mfat_get_word(&found_entry[26]);
+            cpos = _mfat_cluster_pos_init(part, chile_dir_cluster_no, 0);
+            blocks_left = 0xffffffffU;
+          } else {
+            file_entry = found_entry;
+          }
+
+          break;
+        }
+
+        // Go to the next block in the directory.
+        if (cpos.cluster_no != 0U) {
+          if (!_mfat_cluster_pos_advance(&cpos, part)) {
+            return false;
+          }
+        } else {
+          cpos.block_in_cluster += 1;  // FAT16 style linear block access.
+        }
+      }
+
+      // Break loop if we didn't find the file.
+      if (no_more_entries) {
+        break;
+      }
     }
   }
 
   // Could we neither find the file nor a new directory slot for the file?
-  if (file_entry == NULL) {
+  if (file_entry == NULL && !is_root_dir) {
     return false;
   }
 
   // Define the file properties.
   info->part_no = part_no;
-  info->size = _mfat_get_dword(&file_entry[28]);
-  info->first_cluster = (_mfat_get_word(&file_entry[20]) << 16) | _mfat_get_word(&file_entry[26]);
-  info->dir_entry_block = block->blk_no;
-  info->dir_entry_offset = file_entry - block->buf;
-
-  // Does the file exist?
-  if ((file_entry[0] != 0x00) && (file_entry[0] != 0xe5)) {
-    *is_dir = (file_entry[11] & MFAT_ATTR_DIRECTORY) != 0U;
+  if (is_root_dir) {
+    // Special handling of the root directory (it does not have an entry in any directory block).
+    info->size = 0U;
+    info->first_cluster = cpos.cluster_no;
+    info->dir_entry_block = 0U;
+    info->dir_entry_offset = 0U;
+    *file_type = (cpos.cluster_no == 0U) ? MFAT_FILE_TYPE_FAT16ROOTDIR : MFAT_FILE_TYPE_DIR;
     *exists = true;
   } else {
-    *is_dir = false;
-    *exists = false;
+    // For files and non root dirs, we extract file information from the directory block.
+    info->size = _mfat_get_dword(&file_entry[28]);
+    info->first_cluster = (_mfat_get_word(&file_entry[20]) << 16) | _mfat_get_word(&file_entry[26]);
+    info->dir_entry_block = block->blk_no;
+    info->dir_entry_offset = file_entry - block->buf;
+
+    // Does the file exist?
+    if ((file_entry[0] != 0x00) && (file_entry[0] != 0xe5)) {
+      *file_type = (file_entry[11] & MFAT_ATTR_DIRECTORY) != 0U ? MFAT_FILE_TYPE_DIR
+                                                                : MFAT_FILE_TYPE_REGULAR;
+      *exists = true;
+    } else {
+      // Non-existent files must be regular files, since we can't create directories with
+      // MFAT_O_CREAT.
+      *file_type = MFAT_FILE_TYPE_REGULAR;
+      *exists = false;
+    }
   }
 
   return true;
@@ -1092,6 +1128,11 @@ static void _mfat_sync_impl() {
 #endif
 
 static int _mfat_fstat_impl(mfat_file_info_t* info, mfat_stat_t* stat) {
+  // We can't stat root directories.
+  if (info->dir_entry_block == 0U) {
+    return -1;
+  }
+
   // Read the directory entry block (should already be in the cache).
   mfat_cached_block_t* block = _mfat_read_block(info->dir_entry_block, MFAT_CACHE_DATA);
   if (block == NULL) {
@@ -1134,20 +1175,22 @@ static int _mfat_open_impl(const char* path, int oflag) {
   mfat_file_t* f = &s_ctx.file[fd];
 
   // Find the file in the file system structure.
-  mfat_bool_t is_dir;
+  int file_type;
   mfat_bool_t exists;
-  if (!_mfat_find_file(s_ctx.active_partition, path, &f->info, &is_dir, &exists)) {
+  if (!_mfat_find_file(s_ctx.active_partition, path, &f->info, &file_type, &exists)) {
     DBGF("File not found: %s", path);
     return -1;
   }
+  mfat_bool_t is_dir =
+      (file_type == MFAT_FILE_TYPE_DIR) || (file_type == MFAT_FILE_TYPE_FAT16ROOTDIR);
 
-  // Check that we found the correct type (i.e. regular file).
-  if (is_dir) {
-    DBGF("Can not open the directory: %s", path);
+  // Check that we found the correct type.
+  if (((oflag & MFAT_O_DIRECTORY) != 0) && !is_dir) {
+    DBGF("Can not open the file as a directory: %s", path);
     return -1;
   }
 
-  // Handle non-existing files.
+  // Handle non-existing files (can only happen for regular files).
   if (!exists) {
 #if MFAT_ENABLE_WRITE
     // Should we create the file?
@@ -1163,6 +1206,7 @@ static int _mfat_open_impl(const char* path, int oflag) {
 
   // Initialize the file state.
   f->open = true;
+  f->type = file_type;
   f->oflag = oflag;
   f->current_cluster = f->info.first_cluster;
   f->offset = 0U;
@@ -1541,7 +1585,7 @@ int64_t mfat_read(int fd, void* buf, uint32_t nbyte) {
   }
 
   mfat_file_t* f = _mfat_fd_to_file(fd);
-  if (f == NULL) {
+  if (f == NULL || f->type != MFAT_FILE_TYPE_REGULAR) {
     return -1;
   }
 
@@ -1556,7 +1600,7 @@ int64_t mfat_write(int fd, const void* buf, uint32_t nbyte) {
   }
 
   mfat_file_t* f = _mfat_fd_to_file(fd);
-  if (f == NULL) {
+  if (f == NULL || f->type != MFAT_FILE_TYPE_REGULAR) {
     return -1;
   }
 
@@ -1573,7 +1617,7 @@ int64_t mfat_lseek(int fd, int64_t offset, int whence) {
   }
 
   mfat_file_t* f = _mfat_fd_to_file(fd);
-  if (f == NULL) {
+  if (f == NULL || f->type != MFAT_FILE_TYPE_REGULAR) {
     return -1;
   }
 
