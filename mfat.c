@@ -23,6 +23,7 @@
 
 #include "mfat.h"
 
+#include <inttypes.h>
 #include <string.h>  // memcpy, memset
 
 //--------------------------------------------------------------------------------------------------
@@ -281,7 +282,7 @@ static mfat_bool_t _mfat_is_valid_bpb(const uint8_t* bpb_buf) {
   // Check for valid bytes per sector.
   uint32_t bps = _mfat_get_word(&bpb_buf[11]);
   if (bps != 512 && bps != 1024 && bps != 2048 && bps != 4096) {
-    DBGF("\t\tInvalid BPB bytes per sector: %d", bps);
+    DBGF("\t\tInvalid BPB bytes per sector: %" PRIu32, bps);
     return false;
   }
 
@@ -328,7 +329,7 @@ static mfat_cached_block_t* _mfat_get_cached_block(uint32_t blk_no, int cache_ty
   if (cached_block->blk_no != blk_no) {
 #if MFAT_ENABLE_DEBUG
     if (cached_block->state != MFAT_INVALID) {
-      DBGF("Cache %d: Evicting block %u in favor of block %u",
+      DBGF("Cache %d: Evicting block %" PRIu32 " in favor of block %" PRIu32,
            cache_type,
            cached_block->blk_no,
            blk_no);
@@ -338,7 +339,7 @@ static mfat_cached_block_t* _mfat_get_cached_block(uint32_t blk_no, int cache_ty
 #if MFAT_ENABLE_WRITE
     // Flush the block?
     if (cached_block->state == MFAT_DIRTY) {
-      DBGF("Cache %d: Flushing evicted block %u", cache_type, cached_block->blk_no);
+      DBGF("Cache %d: Flushing evicted block %" PRIu32, cache_type, cached_block->blk_no);
       if (s_ctx.write((const char*)cached_block->buf, cached_block->blk_no, s_ctx.custom) == -1) {
         // FATAL: We can't recover from here... :-(
         DBGF("Cache %d: Failed to flush the block", cache_type);
@@ -390,7 +391,7 @@ static mfat_bool_t _mfat_next_cluster(const mfat_partition_t* part, uint32_t* cl
   // Read the FAT block into a cached buffer.
   mfat_cached_block_t* block = _mfat_read_block(fat_block, MFAT_CACHE_FAT);
   if (block == NULL) {
-    DBGF("Failed to read the FAT block %u", fat_block);
+    DBGF("Failed to read the FAT block %" PRIu32, fat_block);
     return false;
   }
   uint8_t* buf = &block->buf[0];
@@ -414,11 +415,11 @@ static mfat_bool_t _mfat_next_cluster(const mfat_partition_t* part, uint32_t* cl
   //  0x00000000 - free cluster
   //  0x0ffffff7 - BAD cluster
   if (next_cluster == 0U || next_cluster == 0x0ffffff7U) {
-    DBGF("Unexpected next cluster: 0x%08x", next_cluster);
+    DBGF("Unexpected next cluster: 0x%08" PRIx32, next_cluster);
     return false;
   }
 
-  DBGF("Next cluster: %u (0x%08x)", next_cluster, next_cluster);
+  DBGF("Next cluster: %" PRIu32 " (0x%08" PRIx32 ")", next_cluster, next_cluster);
 
   // Return the next cluster number.
   *cluster = next_cluster;
@@ -503,7 +504,7 @@ static mfat_bool_t _mfat_decode_gpt(void) {
   // Get the size of each partition entry, in bytes.
   uint32_t entry_size = _mfat_get_dword(&buf[84]);
 
-  DBGF("GPT header: entries_block=%u, num_entries=%u, entry_size=%u",
+  DBGF("GPT header: entries_block=%" PRIu32 ", num_entries=%" PRIu32 ", entry_size=%" PRIu32,
        entries_block,
        num_entries,
        entry_size);
@@ -514,7 +515,7 @@ static mfat_bool_t _mfat_decode_gpt(void) {
     if ((entry_offs % MFAT_BLOCK_SIZE) == 0) {
       block = _mfat_read_block(entries_block, MFAT_CACHE_DATA);
       if (block == NULL) {
-        DBGF("Failed to read the GPT partition entry array at block %u", entries_block);
+        DBGF("Failed to read the GPT partition entry array at block %" PRIu32, entries_block);
         return false;
       }
       buf = &block->buf[0];
@@ -542,7 +543,8 @@ static mfat_bool_t _mfat_decode_gpt(void) {
 
     // Note: We print GUIDs in byte order, as we expect them in our signatures, NOT in GUID
     // mixed endian order.
-    DBGF("GPT entry %d: first_block = %u, GUID = %08x%08x%08x%08x, FAT = %s",
+    DBGF("GPT entry %" PRIu32 ": first_block = %" PRIu32 ", GUID = %08" PRIx32 "%08" PRIx32
+         "%08" PRIx32 "%08" PRIx32 ", FAT = %s",
          i,
          part->first_block,
          _mfat_get_dword(&entry[12]),
@@ -688,7 +690,7 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
     // Check that the number of bytes per sector is 512.
     // TODO(m): We could add support for larger block sizes.
     if (bytes_per_block != MFAT_BLOCK_SIZE) {
-      DBGF("\t\tUnsupported block size: %d", bytes_per_block);
+      DBGF("\t\tUnsupported block size: %" PRIu32, bytes_per_block);
       part->type = MFAT_TYPE_UNKNOWN;
       continue;
     }
@@ -739,20 +741,20 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
     // Print the partition information.
     DBGF("\t\ttype = %s", part->type == MFAT_TYPE_FAT16 ? "FAT16" : "FAT32");
     DBGF("\t\tboot = %s", part->boot ? "Yes" : "No");
-    DBGF("\t\tfirst_block = %u", part->first_block);
-    DBGF("\t\tbytes_per_block = %u", bytes_per_block);
-    DBGF("\t\tnum_blocks = %u", part->num_blocks);
-    DBGF("\t\tblocks_per_cluster = %u", part->blocks_per_cluster);
+    DBGF("\t\tfirst_block = %" PRIu32, part->first_block);
+    DBGF("\t\tbytes_per_block = %" PRIu32, bytes_per_block);
+    DBGF("\t\tnum_blocks = %" PRIu32, part->num_blocks);
+    DBGF("\t\tblocks_per_cluster = %" PRIu32, part->blocks_per_cluster);
 #if MFAT_ENABLE_WRITE
-    DBGF("\t\tnum_clusters = %u", part->num_clusters);
+    DBGF("\t\tnum_clusters = %" PRIu32, part->num_clusters);
 #endif
-    DBGF("\t\tblocks_per_fat = %u", part->blocks_per_fat);
-    DBGF("\t\tnum_fats = %u", part->num_fats);
-    DBGF("\t\tnum_reserved_blocks = %u", part->num_reserved_blocks);
-    DBGF("\t\troot_dir_block = %u", part->root_dir_block);
-    DBGF("\t\troot_dir_cluster = %u", part->root_dir_cluster);
-    DBGF("\t\tblocks_in_root_dir = %u", part->blocks_in_root_dir);
-    DBGF("\t\tfirst_data_block = %u", part->first_data_block);
+    DBGF("\t\tblocks_per_fat = %" PRIu32, part->blocks_per_fat);
+    DBGF("\t\tnum_fats = %" PRIu32, part->num_fats);
+    DBGF("\t\tnum_reserved_blocks = %" PRIu32, part->num_reserved_blocks);
+    DBGF("\t\troot_dir_block = %" PRIu32, part->root_dir_block);
+    DBGF("\t\troot_dir_cluster = %" PRIu32, part->root_dir_cluster);
+    DBGF("\t\tblocks_in_root_dir = %" PRIu32, part->blocks_in_root_dir);
+    DBGF("\t\tfirst_data_block = %" PRIu32, part->first_data_block);
 
     // Print the extended boot signature.
     const uint8_t* ex_boot_sig = (part->type == MFAT_TYPE_FAT32) ? &buf[66] : &buf[38];
@@ -767,7 +769,7 @@ static mfat_bool_t _mfat_decode_partition_tables(void) {
       memcpy(&fs_type[0], &ex_boot_sig[16], 8);
       fs_type[8] = 0;
 
-      DBGF("\t\tvol_id = %04x:%04x", (vol_id >> 16), vol_id & 0xffffU);
+      DBGF("\t\tvol_id = %04" PRIx32 ":%04" PRIx32, (vol_id >> 16), vol_id & 0xffffU);
       DBGF("\t\tlabel = \"%s\"", label);
       DBGF("\t\tfs_type = \"%s\"", fs_type);
     } else {
@@ -910,7 +912,8 @@ static int _mfat_canonicalize_fname(const char* path, char name[12]) {
     }
 
     // Skip empty "/" and "./" directory references.
-  } while (next_idx >= 0 && _mfat_cmpbuf((const uint8_t*)&name[0], (const uint8_t*)"           ", 11));
+  } while (next_idx >= 0 &&
+           _mfat_cmpbuf((const uint8_t*)&name[0], (const uint8_t*)"           ", 11));
 
   return next_idx;
 }
@@ -969,7 +972,7 @@ static mfat_bool_t _mfat_find_file(int part_no,
       // Load the directory table block.
       block = _mfat_read_block(_mfat_cluster_pos_blk_no(&cpos), MFAT_CACHE_DATA);
       if (block == NULL) {
-        DBGF("Unable to load directory block %u", _mfat_cluster_pos_blk_no(&cpos));
+        DBGF("Unable to load directory block %" PRIu32, _mfat_cluster_pos_blk_no(&cpos));
         return false;
       }
       uint8_t* buf = &block->buf[0];
@@ -1064,7 +1067,7 @@ static void _mfat_sync_impl() {
     for (int i = 0; i < MFAT_NUM_CACHED_BLOCKS; ++i) {
       mfat_cached_block_t* cb = &cache->block[i];
       if (cb->state == MFAT_DIRTY) {
-        DBGF("Cache: Flushing block %u", cb->blk_no);
+        DBGF("Cache: Flushing block %" PRIu32, cb->blk_no);
         s_ctx.write((const char*)cb->buf, cb->blk_no, s_ctx.custom);
         cb->state = MFAT_VALID;
       }
@@ -1149,13 +1152,15 @@ static int _mfat_open_impl(const char* path, int oflag) {
   f->current_cluster = f->info.first_cluster;
   f->offset = 0U;
 
-  DBGF(
-      "Opening file: first_cluster = %u (block = %u), size = %u bytes, dir_blk = %u, dir_offs = %u",
-      f->info.first_cluster,
-      _mfat_first_block_of_cluster(&s_ctx.partition[f->info.part_no], f->info.first_cluster),
-      f->info.size,
-      f->info.dir_entry_block,
-      f->info.dir_entry_offset);
+  DBGF("Opening file: first_cluster = %" PRIu32 " (block = %" PRIu32 "), size = %" PRIu32
+       " bytes, dir_blk = %" PRIu32
+       ", dir_offs "
+       "= %" PRIu32,
+       f->info.first_cluster,
+       _mfat_first_block_of_cluster(&s_ctx.partition[f->info.part_no], f->info.first_cluster),
+       f->info.size,
+       f->info.dir_entry_block,
+       f->info.dir_entry_offset);
 
   return fd;
 }
@@ -1184,7 +1189,7 @@ static int64_t _mfat_read_impl(mfat_file_t* f, uint8_t* buf, uint32_t nbyte) {
   // Determine actual size of the operation (clamp to the size of the file).
   if (nbyte > (f->info.size - f->offset)) {
     nbyte = f->info.size - f->offset;
-    DBGF("read: Clamped read request to %u bytes", nbyte);
+    DBGF("read: Clamped read request to %" PRIu32 " bytes", nbyte);
   }
 
   // Early out if only zero bytes were requested (e.g. if we are at the EOF).
@@ -1211,7 +1216,7 @@ static int64_t _mfat_read_impl(mfat_file_t* f, uint8_t* buf, uint32_t nbyte) {
     uint32_t tail_bytes_in_block = MFAT_BLOCK_SIZE - block_offset;
     uint32_t bytes_to_copy = _mfat_min(tail_bytes_in_block, nbyte);
     memcpy(buf, &block->buf[block_offset], bytes_to_copy);
-    DBGF("read: Head read of %u bytes", bytes_to_copy);
+    DBGF("read: Head read of %" PRIu32 " bytes", bytes_to_copy);
 
     buf += bytes_to_copy;
     bytes_read += bytes_to_copy;
@@ -1231,7 +1236,7 @@ static int64_t _mfat_read_impl(mfat_file_t* f, uint8_t* buf, uint32_t nbyte) {
       return -1;
     }
 
-    DBGF("read: Direct read of %u bytes", MFAT_BLOCK_SIZE);
+    DBGF("read: Direct read of %d bytes", MFAT_BLOCK_SIZE);
     if (s_ctx.read((char*)buf, _mfat_cluster_pos_blk_no(&cpos), s_ctx.custom) == -1) {
       DBG("Unable to read block");
       return -1;
@@ -1262,7 +1267,7 @@ static int64_t _mfat_read_impl(mfat_file_t* f, uint8_t* buf, uint32_t nbyte) {
     // Copy the data from the cache to the target buffer.
     uint32_t bytes_to_copy = nbyte - bytes_read;
     memcpy(buf, &block->buf[0], bytes_to_copy);
-    DBGF("read: Tail read of %u bytes", bytes_to_copy);
+    DBGF("read: Tail read of %" PRIu32 " bytes", bytes_to_copy);
 
     bytes_read += bytes_to_copy;
   }
