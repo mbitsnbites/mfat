@@ -969,7 +969,7 @@ static mfat_bool_t _mfat_find_file(int part_no,
 
     // Look up the file name in the directory.
     mfat_bool_t no_more_entries = false;
-    for (; file_entry == NULL && !no_more_entries && blocks_left > 0U; ++blocks_left) {
+    for (; file_entry == NULL && !no_more_entries && blocks_left > 0U; --blocks_left) {
       // Load the directory table block.
       block = _mfat_read_block(_mfat_cluster_pos_blk_no(&cpos), MFAT_CACHE_DATA);
       if (block == NULL) {
