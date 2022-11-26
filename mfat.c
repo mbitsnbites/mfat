@@ -869,69 +869,72 @@ static int _mfat_canonicalize_char(int c) {
 ///   - "File.1"             -> "FILE    1  "
 ///   - "ALongFileName.json" -> "ALONGFILJSO"
 ///   - "bin/foo.exe"        -> "BIN        " (followed by "FOO     EXE" at the next invocation)
-///   - "./foo.exe"          -> "FOO     EXE"
+///   - "."                  -> ".          "
+///   - ".."                 -> "..         "
 /// @param path A path to a file, possibly includuing directory separators (/ or \).
 /// @param[out] fname The canonicalized file name.
 /// @returns the index of the next path part, or -1 if this was the last path part.
 static int _mfat_canonicalize_fname(const char* path, char name[12]) {
-  int next_idx = 0;
+  int pos = 0;
+  int npos = 0;
+  int c;
 
-  do {
-    int pos = next_idx;
-    int npos = 0;
-    int c;
+  // Special cases: "." and ".." (unlike other file names, the dots are spelled out in these names).
+  if (path[0] == '.' && (path[1] == 0 || (path[1] == '.' && path[2] == 0))) {
+    name[0] = '.';
+    name[1] = (path[1] == 0) ? ' ' : '.';
+    for (int i = 2; i < 11; ++i) {
+      name[i] = ' ';
+    }
+    name[11] = 0;
+    return -1;
+  }
 
-    // Extract the name part.
+  // Extract the name part.
+  while (true) {
+    c = (int)(uint8_t)path[pos++];
+    if (c == 0 || c == '.' || c == '/' || c == '\\') {
+      break;
+    }
+    if (npos < 8) {
+      name[npos++] = (char)_mfat_canonicalize_char(c);
+    }
+  }
+
+  // Space-fill remaining characters of the name part.
+  for (; npos < 8; ++npos) {
+    name[npos] = ' ';
+  }
+
+  // Extract the extension part.
+  if (c == '.') {
     while (true) {
       c = (int)(uint8_t)path[pos++];
-      if (c == 0 || c == '.' || c == '/' || c == '\\') {
+      if (c == 0 || c == '/' || c == '\\') {
         break;
       }
-      if (npos < 8) {
+      if (npos < 11) {
         name[npos++] = (char)_mfat_canonicalize_char(c);
       }
     }
+  }
 
-    // Space-fill remaining characters of the name part.
-    for (; npos < 8; ++npos) {
-      name[npos] = ' ';
-    }
+  // Space-fill remaining characters of the extension part.
+  for (; npos < 11; ++npos) {
+    name[npos] = ' ';
+  }
 
-    // Extract the extension part.
-    if (c == '.') {
-      while (true) {
-        c = (int)(uint8_t)path[pos++];
-        if (c == 0 || c == '/' || c == '\\') {
-          break;
-        }
-        if (npos < 11) {
-          name[npos++] = (char)_mfat_canonicalize_char(c);
-        }
-      }
-    }
+  // Zero terminate the string.
+  name[11] = 0;
 
-    // Space-fill remaining characters of the extension part.
-    for (; npos < 11; ++npos) {
-      name[npos] = ' ';
-    }
+  // Was this a directory part of the path (ignore trailing directory separators)?
+  if ((c == '/' || c == '\\') && path[pos] != 0) {
+    // Return the starting position of the next path part.
+    return pos;
+  }
 
-    // Zero terminate the string.
-    name[11] = 0;
-
-    // Was this a directory part of the path (ignore trailing directory separators)?
-    if ((c == '/' || c == '\\') && path[pos] != 0) {
-      // Return the starting position of the next path part.
-      next_idx = pos;
-    } else {
-      // Indicate that there are no more path parts by returning -1.
-      next_idx = -1;
-    }
-
-    // Skip empty "/" and "./" directory references.
-  } while (next_idx >= 0 &&
-           _mfat_cmpbuf((const uint8_t*)&name[0], (const uint8_t*)"           ", 11));
-
-  return next_idx;
+  // Indicate that there are no more path parts by returning -1.
+  return -1;
 }
 
 /// @brief Find a file on the given partition.
