@@ -289,6 +289,15 @@ static mfat_bool_t _mfat_is_valid_bpb(const uint8_t* bpb_buf) {
   return true;
 }
 
+static mfat_bool_t _mfat_is_valid_shortname_file(const uint8_t* dir_entry) {
+  const uint8_t attr = dir_entry[11];
+  if (((attr & MFAT_ATTR_LONG_NAME) == MFAT_ATTR_LONG_NAME) ||
+      ((attr & MFAT_ATTR_VOLUME_ID) == MFAT_ATTR_VOLUME_ID)) {
+    return false;
+  }
+  return true;
+}
+
 static mfat_cached_block_t* _mfat_get_cached_block(uint32_t blk_no, int cache_type) {
   // Pick the relevant cache.
   mfat_cache_t* cache = &s_ctx.cache[cache_type];
@@ -989,6 +998,11 @@ static mfat_bool_t _mfat_find_file(int part_no,
         if (entry[0] == 0x00) {
           no_more_entries = true;
           break;
+        }
+
+        // Not a file/dir entry?
+        if (!_mfat_is_valid_shortname_file(entry)) {
+          continue;
         }
 
         // Is this the file/dir that we are looking for?
