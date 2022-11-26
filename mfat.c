@@ -60,6 +60,11 @@
 #define MFAT_NUM_FDS 4
 #endif
 
+// Maximum number of open directories.
+#ifndef MFAT_NUM_DIRS
+#define MFAT_NUM_DIRS 2
+#endif
+
 // Maximum number of partitions to support.
 #ifndef MFAT_NUM_PARTITIONS
 #define MFAT_NUM_PARTITIONS 4
@@ -174,6 +179,16 @@ typedef struct {
   mfat_file_info_t info;
 } mfat_file_t;
 
+// Forward declared in mfat.h, refered to as the type mfat_dir_t.
+struct mfat_dir_struct {
+  mfat_file_t* file;        // File corresponding to this directory (NULL if not open).
+  mfat_dirent_t dirent;     // The current dirent (as returned by readdir()).
+  mfat_cluster_pos_t cpos;  // Cluster position.
+  uint32_t blocks_left;     // Blocks left to read (only used for FAT16 root dirs).
+  uint32_t block_offset;    // Offset relative to the block start.
+  int items_left;           // HACK!!!!
+};
+
 typedef struct {
   int state;
   uint32_t blk_no;
@@ -199,6 +214,7 @@ typedef struct {
   void* custom;
   mfat_partition_t partition[MFAT_NUM_PARTITIONS];
   mfat_file_t file[MFAT_NUM_FDS];
+  mfat_dir_t dir[MFAT_NUM_DIRS];
   mfat_cache_t cache[MFAT_NUM_CACHES];
 } mfat_ctx_t;
 
@@ -937,6 +953,28 @@ static int _mfat_canonicalize_fname(const char* path, char name[12]) {
   return -1;
 }
 
+static void _mfat_make_printable_fname(const uint8_t* canonical_name, char printable_name[13]) {
+  int src_idx = 0;
+  int dst_idx = 0;
+
+  // Name part.
+  while (src_idx < 8 && canonical_name[src_idx] != ' ') {
+    printable_name[dst_idx++] = canonical_name[src_idx++];
+  }
+  src_idx = 8;
+
+  // Extension part.
+  while (src_idx < 11 && canonical_name[src_idx] != ' ') {
+    if (src_idx == 8) {
+      printable_name[dst_idx++] = '.';
+    }
+    printable_name[dst_idx++] = canonical_name[src_idx++];
+  }
+
+  // Zero-terminate.
+  printable_name[dst_idx] = 0;
+}
+
 /// @brief Find a file on the given partition.
 ///
 /// If the directory (if part of the path) exists, but the file does not exist in the directory,
@@ -1425,6 +1463,122 @@ static int64_t _mfat_lseek_impl(mfat_file_t* f, int64_t offset, int whence) {
   return (int64_t)target_offset;
 }
 
+static mfat_dir_t* _mfat_opendir_impl(int fd) {
+  // Find the next free dir object.
+  int dir_id;
+  for (dir_id = 0; dir_id < MFAT_NUM_DIRS; ++dir_id) {
+    if (s_ctx.dir[dir_id].file == NULL) {
+      break;
+    }
+  }
+  if (dir_id >= MFAT_NUM_DIRS) {
+    DBG("No free dir:s left");
+    return NULL;
+  }
+
+  // Initialize the directory stream object.
+  mfat_dir_t* dirp = &s_ctx.dir[dir_id];
+  dirp->file = _mfat_fd_to_file(fd);
+  if (dirp->file == NULL) {
+    DBG("The dir fd is not an open dir");
+    return NULL;
+  }
+  mfat_partition_t* part = &s_ctx.partition[dirp->file->info.part_no];
+  if (dirp->file->type == MFAT_FILE_TYPE_FAT16ROOTDIR) {
+    // We use a fake/tweaked cluster pos for FAT16 root directories.
+    dirp->cpos.cluster_no = 0U;
+    dirp->cpos.cluster_start_blk = part->root_dir_block;
+    dirp->cpos.block_in_cluster = 0U;
+    dirp->blocks_left = part->blocks_in_root_dir;
+  } else {
+    // We use an "infinite" block count for regular cluster chain dirs.
+    dirp->cpos = _mfat_cluster_pos_init(part, dirp->file->info.first_cluster, 0);
+    dirp->blocks_left = 0xffffffffU;
+  }
+  dirp->block_offset = 0U;
+
+  // TODO(m): Pointer to first file in directory etc.
+  dirp->items_left = 5;  // HACK!
+
+  return dirp;
+}
+
+int _mfat_closedir_impl(mfat_dir_t* dirp) {
+  if (dirp == NULL) {
+    return -1;
+  }
+  if (dirp->file == NULL) {
+    DBG("The dir is already closed");
+    return -1;
+  }
+
+  // Close the file.
+  int result = _mfat_close_impl(dirp->file);
+
+  // The dir is no longer open. This makes the dir object available for future opendir() requests.
+  dirp->file = NULL;
+
+  return result;
+}
+
+mfat_dirent_t* _mfat_readdir_impl(mfat_dir_t* dirp) {
+  // Do we need to advance to the next block in the directory?
+  if (dirp->block_offset >= 512U) {
+    if (dirp->file->type == MFAT_FILE_TYPE_FAT16ROOTDIR) {
+      dirp->cpos.block_in_cluster += 1;  // FAT16 style linear block access.
+    } else {
+      mfat_partition_t* part = &s_ctx.partition[dirp->file->info.part_no];
+      if (!_mfat_cluster_pos_advance(&dirp->cpos, part)) {
+        DBG("readdir: Unable to advance to next cluster.");
+        return NULL;
+      }
+    }
+    dirp->block_offset = 0U;
+  }
+
+  // Look up the next file name in the directory.
+  mfat_bool_t found_entry = false;
+  mfat_bool_t no_more_entries = false;
+  for (; !found_entry && !no_more_entries && dirp->blocks_left > 0U; --dirp->blocks_left) {
+    // Load the directory table block.
+    mfat_cached_block_t* block = _mfat_read_block(_mfat_cluster_pos_blk_no(&dirp->cpos), MFAT_CACHE_DATA);
+    if (block == NULL) {
+      DBGF("Unable to load directory block %" PRIu32, _mfat_cluster_pos_blk_no(&dirp->cpos));
+      return false;
+    }
+    uint8_t* buf = &block->buf[0];
+
+    // Loop over all the files in this directory block.
+    for (; !found_entry && dirp->block_offset < 512U; dirp->block_offset += 32U) {
+      uint8_t* entry = &buf[dirp->block_offset];
+
+      // Empty entry?
+      if (entry[0] == 0xe5) {
+        continue;
+      }
+
+      // Last entry in the directory structure?
+      if (entry[0] == 0x00) {
+        no_more_entries = true;
+        break;
+      }
+
+      // A file/dir entry?
+      if (_mfat_is_valid_shortname_file(entry)) {
+        // We found the next file.
+        found_entry = true;
+        _mfat_make_printable_fname(entry, dirp->dirent.d_name);
+      }
+    }
+  }
+
+  if (!found_entry) {
+    return NULL;
+  }
+
+  return &dirp->dirent;
+}
+
 //--------------------------------------------------------------------------------------------------
 // Public API functions.
 //--------------------------------------------------------------------------------------------------
@@ -1625,4 +1779,49 @@ int64_t mfat_lseek(int fd, int64_t offset, int whence) {
   }
 
   return _mfat_lseek_impl(f, offset, whence);
+}
+
+mfat_dir_t* mfat_fdopendir(int fd) {
+  if (!s_ctx.initialized) {
+    DBG("Not initialized");
+    return NULL;
+  }
+
+  return _mfat_opendir_impl(fd);
+}
+
+mfat_dir_t* mfat_opendir(const char* path) {
+  if (!s_ctx.initialized || s_ctx.active_partition < 0) {
+    DBG("Not initialized");
+    return NULL;
+  }
+
+  int fd = mfat_open(path, MFAT_O_DIRECTORY | MFAT_O_RDONLY);
+  if (fd == -1) {
+    return NULL;
+  }
+  return _mfat_opendir_impl(fd);
+}
+
+int mfat_closedir(mfat_dir_t* dirp) {
+  if (!s_ctx.initialized) {
+    DBG("Not initialized");
+    return -1;
+  }
+
+  return _mfat_closedir_impl(dirp);
+}
+
+mfat_dirent_t* mfat_readdir(mfat_dir_t* dirp) {
+  if (!s_ctx.initialized) {
+    DBG("Not initialized");
+    return NULL;
+  }
+  if (dirp == NULL || dirp->file == NULL) {
+    DBG("Invalid dir");
+    return NULL;
+  }
+
+  // Advance to the next entry in the directory.
+  return _mfat_readdir_impl(dirp);
 }
