@@ -896,14 +896,22 @@ static int _mfat_canonicalize_fname(const char* path, char name[12]) {
   int c;
 
   // Special cases: "." and ".." (unlike other file names, the dots are spelled out in these names).
-  if (path[0] == '.' && (path[1] == 0 || (path[1] == '.' && path[2] == 0))) {
+  if (path[0] == '.' && (path[1] == 0 || path[1] == '/' || path[1] == '\\')) {
     name[0] = '.';
-    name[1] = (path[1] == 0) ? ' ' : '.';
+    for (int i = 1; i < 11; ++i) {
+      name[i] = ' ';
+    }
+    name[11] = 0;
+    return (path[1] == 0) ? -1 : 2;
+  }
+  if (path[0] == '.' && path[1] == '.' && (path[2] == 0 || path[2] == '/' || path[2] == '\\')) {
+    name[0] = '.';
+    name[1] = '.';
     for (int i = 2; i < 11; ++i) {
       name[i] = ' ';
     }
     name[11] = 0;
-    return -1;
+    return (path[2] == 0) ? -1 : 3;
   }
 
   // Extract the name part.
@@ -1541,7 +1549,8 @@ mfat_dirent_t* _mfat_readdir_impl(mfat_dir_t* dirp) {
   mfat_bool_t no_more_entries = false;
   for (; !found_entry && !no_more_entries && dirp->blocks_left > 0U; --dirp->blocks_left) {
     // Load the directory table block.
-    mfat_cached_block_t* block = _mfat_read_block(_mfat_cluster_pos_blk_no(&dirp->cpos), MFAT_CACHE_DATA);
+    mfat_cached_block_t* block =
+        _mfat_read_block(_mfat_cluster_pos_blk_no(&dirp->cpos), MFAT_CACHE_DATA);
     if (block == NULL) {
       DBGF("Unable to load directory block %" PRIu32, _mfat_cluster_pos_blk_no(&dirp->cpos));
       return false;
