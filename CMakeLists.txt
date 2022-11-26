@@ -40,6 +40,7 @@ set(MFAT_ENABLE_MBR        ON  CACHE BOOL   "Enable MBR suport")
 set(MFAT_ENABLE_GPT        ON  CACHE BOOL   "Enable GPT suport")
 set(MFAT_NUM_CACHED_BLOCKS "2" CACHE STRING "Number of blocks to cache")
 set(MFAT_NUM_FDS           "4" CACHE STRING "Maximum number of file descriptors")
+set(MFAT_NUM_DIRS          "2" CACHE STRING "Maximum number of open directories")
 set(MFAT_NUM_PARTITIONS    "4" CACHE STRING "Maximum number of partitions")
 
 list(APPEND defines "MFAT_ENABLE_DEBUG=$<BOOL:${MFAT_ENABLE_DEBUG}>")
@@ -48,6 +49,7 @@ list(APPEND defines "MFAT_ENABLE_MBR=$<BOOL:${MFAT_ENABLE_MBR}>")
 list(APPEND defines "MFAT_ENABLE_GPT=$<BOOL:${MFAT_ENABLE_GPT}>")
 list(APPEND defines "MFAT_NUM_CACHED_BLOCKS=${MFAT_NUM_CACHED_BLOCKS}")
 list(APPEND defines "MFAT_NUM_FDS=${MFAT_NUM_FDS}")
+list(APPEND defines "MFAT_NUM_DIRS=${MFAT_NUM_DIRS}")
 list(APPEND defines "MFAT_NUM_PARTITIONS=${MFAT_NUM_PARTITIONS}")
 
 # Define compiler warnings.

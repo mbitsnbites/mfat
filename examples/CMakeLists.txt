@@ -25,5 +25,8 @@
 add_executable(fatcat fatcat.c)
 target_link_libraries(fatcat mfat)
 
+add_executable(fatdir fatdir.c)
+target_link_libraries(fatdir mfat)
+
 add_executable(fatstat fatstat.c)
 target_link_libraries(fatstat mfat)

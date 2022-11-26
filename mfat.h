@@ -46,6 +46,7 @@ extern "C" {
 #define MFAT_O_RDWR (MFAT_O_RDONLY | MFAT_O_WRONLY)
 #define MFAT_O_APPEND 4
 #define MFAT_O_CREAT 8
+#define MFAT_O_DIRECTORY 16
 
 // Whence values for mfat_lseek().
 #define MFAT_SEEK_SET 0  ///< The offset is set to offset bytes.
@@ -69,6 +70,9 @@ extern "C" {
 #define MFAT_S_ISREG(m) (((m)&MFAT_S_IFREG) != 0U)
 #define MFAT_S_ISDIR(m) (((m)&MFAT_S_IFDIR) != 0U)
 
+// Maximum length of a filename (for mfat_dirent_t).
+#define MFAT_NAME_MAX 12
+
 // The values of this struct are compatible with struct tm in <time.h>, so it is easy to convert the
 // date/time to other representations using mktime(), for instance.
 typedef struct {
@@ -85,6 +89,13 @@ typedef struct {
   uint32_t st_size;     ///< Size in bytes.
   mfat_time_t st_mtim;  ///< Modification time.
 } mfat_stat_t;
+
+typedef struct {
+  char d_name[MFAT_NAME_MAX + 1];  ///< Filename of the directory entry.
+} mfat_dirent_t;
+
+struct mfat_dir_struct;
+typedef struct mfat_dir_struct mfat_dir_t;
 
 /// @brief Block reader function pointer.
 /// @param ptr Pointer to the buffer to read to.
@@ -180,6 +191,27 @@ int64_t mfat_write(int fd, const void* buf, uint32_t nbyte);
 /// the operation was successful, or -1 on failure.
 /// @note It is possible to query the current file position with mfat_lseek(fd, 0, MFAT_SEEK_CUR).
 int64_t mfat_lseek(int fd, int64_t offset, int whence);
+
+/// @brief Open directory associated with file descriptor.
+/// @param fd The file descriptor.
+/// @returns a pointer to a directory stream object, or NULL if the directory could not be opened.
+mfat_dir_t* mfat_fdopendir(int fd);
+
+/// @brief Open directory with the given name.
+/// @param path The path to the directory.
+/// @returns a pointer to a directory stream object, or NULL if the directory could not be opened.
+mfat_dir_t* mfat_opendir(const char* path);
+
+/// @brief Close a directory stream.
+/// @param dirp A pointer to the directory stream object.
+/// @returns zero (0) on success, or -1 on failure.
+int mfat_closedir(mfat_dir_t* dirp);
+
+/// @brief Read the next directory entry of a directory stream.
+/// @param dirp A pointer to the directory stream object.
+/// @returns a pointer to a structure representing the directory entry at the current position in
+/// the directory stream, or NULL if the end of the directory was reached or an error occurred.
+mfat_dirent_t* mfat_readdir(mfat_dir_t* dirp);
 
 #ifdef __cplusplus
 }
