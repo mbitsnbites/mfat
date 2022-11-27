@@ -118,7 +118,7 @@ typedef int mfat_bool_t;
 #define MFAT_VALID 1
 #define MFAT_DIRTY 2
 
-// Different types of caches (we keep independent block types in different caches).
+// Different types of block caches (we keep independent block types in different caches).
 #define MFAT_CACHE_DATA 0
 #define MFAT_CACHE_FAT 1
 #define MFAT_NUM_CACHES 2
@@ -201,7 +201,7 @@ typedef struct {
   // least recently used cached block item.
   int pri[MFAT_NUM_CACHED_BLOCKS];
 #endif
-} mfat_cache_t;
+} mfat_block_cache_t;
 
 typedef struct {
   mfat_bool_t initialized;
@@ -214,7 +214,7 @@ typedef struct {
   mfat_partition_t partition[MFAT_NUM_PARTITIONS];
   mfat_file_t file[MFAT_NUM_FDS];
   mfat_dir_t dir[MFAT_NUM_DIRS];
-  mfat_cache_t cache[MFAT_NUM_CACHES];
+  mfat_block_cache_t block_cache[MFAT_NUM_CACHES];
 } mfat_ctx_t;
 
 // Statically allocated state.
@@ -322,7 +322,7 @@ static mfat_bool_t _mfat_is_valid_shortname_file(const uint8_t* dir_entry) {
 
 static mfat_cached_block_t* _mfat_get_cached_block(uint32_t blk_no, int cache_type) {
   // Pick the relevant cache.
-  mfat_cache_t* cache = &s_ctx.cache[cache_type];
+  mfat_block_cache_t* cache = &s_ctx.block_cache[cache_type];
 
 #if MFAT_NUM_CACHED_BLOCKS > 1
   // By default, pick the last (least recently used) item in the pirority queue...
@@ -1162,7 +1162,7 @@ static mfat_bool_t _mfat_find_file(int part_no,
 #if MFAT_ENABLE_WRITE
 static void _mfat_sync_impl() {
   for (int j = 0; j < MFAT_NUM_CACHES; ++j) {
-    mfat_cache_t* cache = &s_ctx.cache[j];
+    mfat_block_cache_t* cache = &s_ctx.block_cache[j];
     for (int i = 0; i < MFAT_NUM_CACHED_BLOCKS; ++i) {
       mfat_cached_block_t* cb = &cache->block[i];
       if (cb->state == MFAT_DIRTY) {
@@ -1612,7 +1612,7 @@ int mfat_mount(mfat_read_block_fun_t read_fun, mfat_write_block_fun_t write_fun,
 #if MFAT_NUM_CACHED_BLOCKS > 1
   // Initialize the block cache priority queues.
   for (int j = 0; j < MFAT_NUM_CACHES; ++j) {
-    mfat_cache_t* cache = &s_ctx.cache[j];
+    mfat_block_cache_t* cache = &s_ctx.block_cache[j];
     for (int i = 0; i < MFAT_NUM_CACHED_BLOCKS; ++i) {
       // Assign initial items to the priority queue.
       cache->pri[i] = i;
