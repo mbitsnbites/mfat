@@ -70,6 +70,11 @@
 #define MFAT_NUM_PARTITIONS 4
 #endif
 
+// Maximum number of path lookups to cache.
+#ifndef MFAT_NUM_CACHED_PATHS
+#define MFAT_NUM_CACHED_PATHS 1
+#endif
+
 //--------------------------------------------------------------------------------------------------
 // Debugging macros.
 //--------------------------------------------------------------------------------------------------
@@ -204,6 +209,21 @@ typedef struct {
 } mfat_block_cache_t;
 
 typedef struct {
+  int part_no;
+  uint32_t path_crc;
+  uint32_t dir_cluster_no;
+} mfat_cached_path_t;
+
+typedef struct {
+  mfat_cached_path_t path[MFAT_NUM_CACHED_PATHS];
+#if MFAT_NUM_CACHED_PATHS > 1
+  // This is a priority queue: The last item in the queue is an index to the
+  // least recently used cached path item.
+  int pri[MFAT_NUM_CACHED_PATHS];
+#endif
+} mfat_path_cache_t;
+
+typedef struct {
   mfat_bool_t initialized;
   int active_partition;
   mfat_read_block_fun_t read;
@@ -215,6 +235,7 @@ typedef struct {
   mfat_file_t file[MFAT_NUM_FDS];
   mfat_dir_t dir[MFAT_NUM_DIRS];
   mfat_block_cache_t block_cache[MFAT_NUM_CACHES];
+  mfat_path_cache_t path_cache;
 } mfat_ctx_t;
 
 // Statically allocated state.
@@ -223,6 +244,14 @@ static mfat_ctx_t s_ctx;
 //--------------------------------------------------------------------------------------------------
 // Private functions.
 //--------------------------------------------------------------------------------------------------
+
+static int _mfat_to_upper(int c) {
+  // Convert lower case to upper case.
+  if (c >= 'a' && c <= 'z') {
+    return c - 'a' + 'A';
+  }
+  return c;
+}
 
 static inline uint32_t _mfat_min(uint32_t a, uint32_t b) {
   return (a < b) ? a : b;
@@ -244,6 +273,33 @@ static mfat_bool_t _mfat_cmpbuf(const uint8_t* a, const uint8_t* b, const uint32
     }
   }
   return true;
+}
+
+uint32_t _mfat_path_crc(const char* str, int num_bytes) {
+  static const uint32_t CRC32C_TAB[] = {0x00000000,
+                                        0x105ec76f,
+                                        0x20bd8ede,
+                                        0x30e349b1,
+                                        0x417b1dbc,
+                                        0x5125dad3,
+                                        0x61c69362,
+                                        0x7198540d,
+                                        0x82f63b78,
+                                        0x92a8fc17,
+                                        0xa24bb5a6,
+                                        0xb21572c9,
+                                        0xc38d26c4,
+                                        0xd3d3e1ab,
+                                        0xe330a81a,
+                                        0xf36e6f75};
+
+  uint32_t crc = ~0U;
+  for (; num_bytes > 0; --num_bytes) {
+    const uint32_t byte = (uint32_t)_mfat_to_upper((int)*str++);
+    crc = CRC32C_TAB[(crc ^ byte) & 0x0fU] ^ (crc >> 4U);
+    crc = CRC32C_TAB[(crc ^ (byte >> 4U)) & 0x0fU] ^ (crc >> 4U);
+  }
+  return ~crc;
 }
 
 #if MFAT_ENABLE_MBR
@@ -857,16 +913,14 @@ static void _mfat_dir_entry_to_stat(uint8_t* dir_entry, mfat_stat_t* stat) {
 }
 
 static int _mfat_canonicalize_char(int c) {
+  // Convert lower case to upper case.
+  c = _mfat_to_upper(c);
+
   // Valid character?
   if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '$' || c == '%' || c == '-' ||
       c == '_' || c == '@' || c == '~' || c == '`' || c == '!' || c == '(' || c == ')' ||
       c == '{' || c == '}' || c == '^' || c == '#' || c == '&') {
     return c;
-  }
-
-  // Convert lower case to upper case.
-  if (c >= 'a' && c <= 'z') {
-    return c - 'a' + 'A';
   }
 
   // Invalid character.
@@ -1024,13 +1078,38 @@ static mfat_bool_t _mfat_find_file(int part_no,
   // Try to find the given path.
   mfat_cached_block_t* block = NULL;
   uint8_t* file_entry = NULL;
+  mfat_cached_path_t new_path_cache_entry;
+  mfat_bool_t has_new_path_cache_entry = false;
   if (!is_root_dir) {
     // Skip leading slashes.
     while (*path == '/' || *path == '\\') {
       ++path;
     }
 
+    // Cache lookup...
     int path_pos = 0;
+    {
+      int last_pathsep_pos = -1;
+      for (int i = 0; path[i] != 0; ++i) {
+        if (path[i] == '/' || path[i] == '\\') {
+          last_pathsep_pos = i;
+        }
+      }
+      if (last_pathsep_pos >= 0) {
+        uint32_t path_crc = _mfat_path_crc(path, last_pathsep_pos + 1);
+        for (int i = 0; i < MFAT_NUM_CACHED_PATHS; ++i) {
+          mfat_cached_path_t* entry = &s_ctx.path_cache.path[i];
+          if ((entry->part_no == part_no) && (entry->path_crc == path_crc)) {
+            DBGF("Path lookup cache hit for \"%s\"", path);
+            path_pos = last_pathsep_pos + 1;
+            cpos = _mfat_cluster_pos_init(part, entry->dir_cluster_no, 0);
+            blocks_left = 0xffffffffU;
+            break;
+          }
+        }
+      }
+    }
+
     while (path_pos >= 0) {
       // Extract a directory entry compatible file name.
       char fname[12];
@@ -1093,10 +1172,16 @@ static mfat_bool_t _mfat_find_file(int part_no,
             }
 
             // Decode the starting cluster of the child directory entry table.
-            uint32_t chile_dir_cluster_no =
+            uint32_t child_dir_cluster_no =
                 (_mfat_get_word(&found_entry[20]) << 16) | _mfat_get_word(&found_entry[26]);
-            cpos = _mfat_cluster_pos_init(part, chile_dir_cluster_no, 0);
+            cpos = _mfat_cluster_pos_init(part, child_dir_cluster_no, 0);
             blocks_left = 0xffffffffU;
+
+            // We got a new path cache entry candidate.
+            new_path_cache_entry.part_no = part_no;
+            new_path_cache_entry.path_crc = _mfat_path_crc(path, path_pos);
+            new_path_cache_entry.dir_cluster_no = child_dir_cluster_no;
+            has_new_path_cache_entry = true;
           } else {
             file_entry = found_entry;
           }
@@ -1124,6 +1209,11 @@ static mfat_bool_t _mfat_find_file(int part_no,
   // Could we neither find the file nor a new directory slot for the file?
   if (file_entry == NULL && !is_root_dir) {
     return false;
+  }
+
+  if (has_new_path_cache_entry) {
+    // TODO(m): Implement LRU eviction.
+    s_ctx.path_cache.path[0] = new_path_cache_entry;
   }
 
   // Define the file properties.
