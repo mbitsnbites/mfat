@@ -186,7 +186,6 @@ struct mfat_dir_struct {
   mfat_cluster_pos_t cpos;  // Cluster position.
   uint32_t blocks_left;     // Blocks left to read (only used for FAT16 root dirs).
   uint32_t block_offset;    // Offset relative to the block start.
-  int items_left;           // HACK!!!!
 };
 
 typedef struct {
@@ -1504,9 +1503,6 @@ static mfat_dir_t* _mfat_opendir_impl(int fd) {
     dirp->blocks_left = 0xffffffffU;
   }
   dirp->block_offset = 0U;
-
-  // TODO(m): Pointer to first file in directory etc.
-  dirp->items_left = 5;  // HACK!
 
   return dirp;
 }
