@@ -40,6 +40,11 @@
 #define MFAT_ENABLE_WRITE 1
 #endif
 
+// Enable directory reading (opendir etc)?
+#ifndef MFAT_ENABLE_OPENDIR
+#define MFAT_ENABLE_OPENDIR 1
+#endif
+
 // Enable MBR support?
 #ifndef MFAT_ENABLE_MBR
 #define MFAT_ENABLE_MBR 1
@@ -961,6 +966,7 @@ static int _mfat_canonicalize_fname(const char* path, char name[12]) {
   return -1;
 }
 
+#if MFAT_ENABLE_OPENDIR
 static void _mfat_make_printable_fname(const uint8_t* canonical_name, char printable_name[13]) {
   int src_idx = 0;
   int dst_idx = 0;
@@ -982,6 +988,7 @@ static void _mfat_make_printable_fname(const uint8_t* canonical_name, char print
   // Zero-terminate.
   printable_name[dst_idx] = 0;
 }
+#endif
 
 /// @brief Find a file on the given partition.
 ///
@@ -1471,6 +1478,7 @@ static int64_t _mfat_lseek_impl(mfat_file_t* f, int64_t offset, int whence) {
   return (int64_t)target_offset;
 }
 
+#if MFAT_ENABLE_OPENDIR
 static mfat_dir_t* _mfat_opendir_impl(int fd) {
   // Find the next free dir object.
   int dir_id;
@@ -1510,7 +1518,9 @@ static mfat_dir_t* _mfat_opendir_impl(int fd) {
 
   return dirp;
 }
+#endif
 
+#if MFAT_ENABLE_OPENDIR
 int _mfat_closedir_impl(mfat_dir_t* dirp) {
   if (dirp == NULL) {
     return -1;
@@ -1528,7 +1538,9 @@ int _mfat_closedir_impl(mfat_dir_t* dirp) {
 
   return result;
 }
+#endif
 
+#if MFAT_ENABLE_OPENDIR
 mfat_dirent_t* _mfat_readdir_impl(mfat_dir_t* dirp) {
   // Do we need to advance to the next block in the directory?
   if (dirp->block_offset >= 512U) {
@@ -1587,6 +1599,7 @@ mfat_dirent_t* _mfat_readdir_impl(mfat_dir_t* dirp) {
 
   return &dirp->dirent;
 }
+#endif
 
 //--------------------------------------------------------------------------------------------------
 // Public API functions.
@@ -1795,15 +1808,22 @@ int64_t mfat_lseek(int fd, int64_t offset, int whence) {
 }
 
 mfat_dir_t* mfat_fdopendir(int fd) {
+#if MFAT_ENABLE_OPENDIR
   if (!s_ctx.initialized) {
     DBG("Not initialized");
     return NULL;
   }
 
   return _mfat_opendir_impl(fd);
+#else
+  DBG("mfat_opendir() was disabled at compile-time");
+  (void)fd;
+  return NULL;
+#endif
 }
 
 mfat_dir_t* mfat_opendir(const char* path) {
+#if MFAT_ENABLE_OPENDIR
   if (!s_ctx.initialized || s_ctx.active_partition < 0) {
     DBG("Not initialized");
     return NULL;
@@ -1814,18 +1834,28 @@ mfat_dir_t* mfat_opendir(const char* path) {
     return NULL;
   }
   return _mfat_opendir_impl(fd);
+#else
+  (void)path;
+  return NULL;
+#endif
 }
 
 int mfat_closedir(mfat_dir_t* dirp) {
+#if MFAT_ENABLE_OPENDIR
   if (!s_ctx.initialized) {
     DBG("Not initialized");
     return -1;
   }
 
   return _mfat_closedir_impl(dirp);
+#else
+  (void)dirp;
+  return -1;
+#endif
 }
 
 mfat_dirent_t* mfat_readdir(mfat_dir_t* dirp) {
+#if MFAT_ENABLE_OPENDIR
   if (!s_ctx.initialized) {
     DBG("Not initialized");
     return NULL;
@@ -1837,4 +1867,8 @@ mfat_dirent_t* mfat_readdir(mfat_dir_t* dirp) {
 
   // Advance to the next entry in the directory.
   return _mfat_readdir_impl(dirp);
+#else
+  (void)dirp;
+  return NULL;
+#endif
 }
