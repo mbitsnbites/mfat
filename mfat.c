@@ -1772,6 +1772,10 @@ int64_t mfat_write(int fd, const void* buf, uint32_t nbyte) {
 
   return _mfat_write_impl(f, (const uint8_t*)buf, nbyte);
 #else
+  DBG("mfat_write() was disabled at compile-time");
+  (void)fd;
+  (void)buf;
+  (void)nbyte;
   return -1;
 #endif
 }
