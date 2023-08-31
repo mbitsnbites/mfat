@@ -1,3 +1,5 @@
+## ⚠️ This repository has moved to: https://gitlab.com/mbitsnbites/mfat
+
 # MFAT
 
 MFAT is a minimal I/O library for [FAT (File Allocation Table)](https://en.wikipedia.org/wiki/File_Allocation_Table) volumes.
